@@ -1,8 +1,10 @@
 services:
 
   mosquitto:
+
     image: eclipse-mosquitto:2
     container_name: nshmqtt-mosquitto
+
     # Explicit hostname on every service in this file, matching its own
     # container_name -- without it, a container's own OS-level hostname
     # (what `hostname` returns *inside* it, unrelated to how other
@@ -12,12 +14,18 @@ services:
     # longer derives from this at all (see config.h's own comment on
     # why a hostname-based default was tried and then dropped in favor
     # of a random one).
+
     hostname: nshmqtt-mosquitto
     restart: always
-    # Not published directly -- nginx's stream{} block is the published
-    # MQTT entry point (port 1883 on the host).
+
+    # Not published directly -- nginx is the published entry point for
+    # both: native MQTT via its stream{} block (port 1883 on the host),
+    # MQTT-over-WebSocket via its http{} block (see nginx.conf).
+
     expose:
       - "1883"
+      - "9001"
+
     volumes:
       - ./mosquitto/config:/mosquitto/config:ro
       # Named volumes, not bind mounts: DrvFs (Windows) can't represent
@@ -26,6 +34,7 @@ services:
       - mosquitto-log:/mosquitto/log
 
   nshmqtt:
+
     build: .
     image: nshmqtt:latest # matches build.sh's own tag -- avoids a second, differently-tagged image
     container_name: nshmqtt
@@ -33,6 +42,7 @@ services:
     restart: always
     depends_on:
       - mosquitto
+
     environment:
       # Override via a (gitignored) local .env file, e.g. to point this
       # stack's nshmqtt at a real external broker instead of the bundled one.
@@ -62,8 +72,10 @@ services:
       # /metrics-state on their own dedicated port (9100) -- see nginx.conf.
       NSHMQTT_TCP_PORT: "9100"
       NSHMQTT_TCP_ADDRESS: "0.0.0.0"
+
     expose:
       - "9100"
+
     volumes:
       - nshmqtt-state:/var/lib/nshmqtt
       - nshmqtt-socket:/run/nshmqtt
@@ -72,7 +84,9 @@ services:
   # (stream{} passthrough to mosquitto) -- plain and TLS side by side, see
   # nginx/nginx.conf. Run ./gen-cert.sh once before starting this with TLS
   # in use; nginx won't start without tls/tls.crt + tls.key present.
+
   nginx:
+
     image: nginx:alpine
     container_name: nshmqtt-nginx
     hostname: nshmqtt-nginx
@@ -80,6 +94,7 @@ services:
     depends_on:
       - nshmqtt
       - mosquitto
+
     ports:
       # Every published port has its own bind-address AND port-number
       # variable, all overridable in a local .env file without touching
@@ -94,7 +109,10 @@ services:
       - "${HTTPS_BIND:-0.0.0.0}:${HTTPS_PORT:-8444}:8443" # HTTPS
       - "${MQTT_BIND:-127.0.0.1}:${MQTT_PORT:-1883}:1883" # MQTT
       - "${MQTTS_BIND:-0.0.0.0}:${MQTTS_PORT:-8883}:8883" # MQTT/TLS
+      - "${MQTTWS_BIND:-127.0.0.1}:${MQTTWS_PORT:-9001}:9001" # MQTT over WebSocket -- browser clients (MQTT.js, ...)
+      - "${MQTTWSS_BIND:-0.0.0.0}:${MQTTWSS_PORT:-9002}:9002" # MQTT over WebSocket/TLS
       - "${METRICS_BIND:-0.0.0.0}:${METRICS_PORT:-9100}:9100" # metrics -- nginx's own dedicated exporter-style listener
+
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./tls:/etc/nginx/tls:ro
@@ -109,7 +127,9 @@ services:
   # both are reached only through nginx's TLS listeners (see nginx.conf and
   # nginx's own ports: above); nginx itself starts fine either way, whether
   # or not this profile is active.
+
   prometheus:
+
     profiles: ["monitoring"]
     image: prom/prometheus:latest
     container_name: nshmqtt-prometheus
@@ -117,13 +137,16 @@ services:
     restart: always
     depends_on:
       - nshmqtt
+
     expose:
       - "9090"
+
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus-data:/prometheus
 
   grafana:
+
     profiles: ["monitoring"]
     image: grafana/grafana:latest
     container_name: nshmqtt-grafana
@@ -131,8 +154,10 @@ services:
     restart: always
     depends_on:
       - prometheus
+
     expose:
       - "3000"
+
     volumes:
       - grafana-data:/var/lib/grafana
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
@@ -142,7 +167,9 @@ services:
   # above, so its lifecycle (start/stop) is tied to theirs via this same
   # profile; see nginx/nginx-monitoring.conf's own top comment for why
   # that split matters.
+
   nginx-monitoring:
+
     profiles: ["monitoring"]
     image: nginx:alpine
     container_name: nshmqtt-nginx-monitoring
@@ -151,14 +178,17 @@ services:
     depends_on:
       - grafana
       - prometheus
+
     ports:
       - "${GRAFANA_BIND:-0.0.0.0}:${GRAFANA_PORT:-3000}:3443"
       - "${PROMETHEUS_BIND:-127.0.0.1}:${PROMETHEUS_PORT:-9090}:9444"
+
     volumes:
       - ./nginx/nginx-monitoring.conf:/etc/nginx/nginx.conf:ro
       - ./tls:/etc/nginx/tls:ro
 
 volumes:
+
   nshmqtt-state:
   nshmqtt-socket:
   mosquitto-data:

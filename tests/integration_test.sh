@@ -20,6 +20,14 @@
 # shape) still run. Webhook-forwarding tests need both mosquitto (to
 # publish the test messages) and python3 (for a minimal mock HTTP
 # receiver) -- skipped if either is missing.
+#
+# Every "poll until ready" loop below (process startup, MQTT round-trip
+# settling, webhook delivery) uses the same `seq 1 100` / `sleep 0.1`
+# shape -- a 10s ceiling, deliberately generous. The loop always breaks
+# the instant its condition is met, so this costs nothing on a normal
+# run; it only matters on a slower/busier machine (a shared CI runner,
+# say), where too tight a ceiling reads whatever's there yet -- possibly
+# nothing -- instead of actually waiting for it.
 
 set -u
 
@@ -92,7 +100,7 @@ allow_anonymous true
 EOF
     "$MOSQUITTO_BIN" -c "$WORKDIR/mosquitto.conf" >"$WORKDIR/mosquitto.log" 2>&1 &
     MOSQUITTO_PID=$!
-    for _ in $(seq 1 50); do
+    for _ in $(seq 1 100); do
         kill -0 "$MOSQUITTO_PID" 2>/dev/null || return 1
         # A plain TCP connect probe is enough to know the listener is up.
         (exec 3<>"/dev/tcp/127.0.0.1/$MOSQUITTO_PORT") 2>/dev/null && exec 3<&- 3>&- && return 0
@@ -131,7 +139,7 @@ EOF
     : > "$WEBHOOK_CAPTURE"
     python3 "$WORKDIR/webhook_mock.py" "$WEBHOOK_PORT" "$WEBHOOK_CAPTURE" >"$WORKDIR/webhook_mock.log" 2>&1 &
     WEBHOOK_MOCK_PID=$!
-    for _ in $(seq 1 50); do
+    for _ in $(seq 1 100); do
         kill -0 "$WEBHOOK_MOCK_PID" 2>/dev/null || return 1
         (exec 3<>"/dev/tcp/127.0.0.1/$WEBHOOK_PORT") 2>/dev/null && exec 3<&- 3>&- && return 0
         sleep 0.1
@@ -163,7 +171,7 @@ write_conf() {
 start_daemon() {
     "$NSHMQTT_BIN" --config "$CONF" >"$WORKDIR/stdout.log" 2>"$WORKDIR/stderr.log" &
     NSHMQTT_PID=$!
-    for _ in $(seq 1 50); do
+    for _ in $(seq 1 100); do
         # A socket file existing only means bind() has happened, not that
         # listen() has -- there's a narrow window between the two where a
         # connect() attempt gets ECONNREFUSED even though `-S` already
@@ -409,7 +417,7 @@ if [ "$HAVE_MOSQUITTO" = "1" ] && [ "$HAVE_PYTHON3" = "1" ] && kill -0 "$MOSQUIT
             # delivered (no retained catch-up for a plain publish), so wait
             # for mqtt_connected=1 first rather than racing it.
             mqtt_ready=""
-            for _ in $(seq 1 50); do
+            for _ in $(seq 1 100); do
                 if curl -sS --unix-socket "$SOCK" 'http://localhost/metrics' 2>/dev/null | grep -q 'nshmqtt_mqtt_connected 1'; then
                     mqtt_ready="1"
                     break
@@ -427,7 +435,7 @@ if [ "$HAVE_MOSQUITTO" = "1" ] && [ "$HAVE_PYTHON3" = "1" ] && kill -0 "$MOSQUIT
             mosquitto_pub -h 127.0.0.1 -p "$MOSQUITTO_PORT" -t 'other/topic' -m 'should-not-forward'
 
             delivered=""
-            for _ in $(seq 1 30); do
+            for _ in $(seq 1 100); do
                 if grep -q 'hello-webhook' "$WEBHOOK_CAPTURE" 2>/dev/null; then
                     delivered="1"
                     break
@@ -484,7 +492,7 @@ if [ "$HAVE_MOSQUITTO" = "1" ] && kill -0 "$MOSQUITTO_PID" 2>/dev/null; then
 
         # Same subscribe-readiness race as the webhook block above.
         mqtt_ready=""
-        for _ in $(seq 1 50); do
+        for _ in $(seq 1 100); do
             if curl -sS --unix-socket "$SOCK" 'http://localhost/metrics' 2>/dev/null | grep -q 'nshmqtt_mqtt_connected 1'; then
                 mqtt_ready="1"
                 break
@@ -523,7 +531,7 @@ if [ "$HAVE_MOSQUITTO" = "1" ] && kill -0 "$MOSQUITTO_PID" 2>/dev/null; then
         # (config lines accumulate across restarts in this test) -- needed
         # here too, same as every other /metrics-state call after that point.
         state_body=""
-        for _ in $(seq 1 30); do
+        for _ in $(seq 1 100); do
             state_body="$(curl -sS --unix-socket "$SOCK" -H 'X-Mqtt-Api-Key: secret-one' \
                 'http://localhost/metrics-state' 2>/dev/null)"
             echo "$state_body" | grep -q 'json_test_device_wifi_attempts' && break

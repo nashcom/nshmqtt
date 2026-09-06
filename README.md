@@ -979,11 +979,12 @@ docker compose up -d     # nginx.conf's ssl_certificate/ssl_certificate_key poin
 ```
 
 `nginx/nginx.conf` adds a TLS listener alongside every plain one, on the same `server{}` block (so nothing is
-duplicated) -- `8443` next to `8080` for HTTPS, `8883` next to `1883` for MQTT/TLS (mapped to host `8444` and
-`8883` respectively in `docker-compose.yml`, since `8443` is already claimed by another project's stack on a
-typical dev machine, same reasoning as `8081` for `8080`). The plain listeners are not going away -- they're what
-this project's own examples and tests already assume, so TLS is additive, not a cutover. Grafana and Prometheus's
-own listeners (`3443`, `9444`) are TLS-only, no plain fallback -- see the "Docker" section below.
+duplicated) -- `8443` next to `8080` for HTTPS, `8883` next to `1883` for MQTT/TLS, `9002` next to `9001` for
+MQTT-over-WebSocket/TLS (mapped to host `8444` and `8883` respectively in `docker-compose.yml`, since `8443` is
+already claimed by another project's stack on a typical dev machine, same reasoning as `8081` for `8080`). The
+plain listeners are not going away -- they're what this project's own examples and tests already assume, so TLS
+is additive, not a cutover. Grafana and Prometheus's own listeners (`3443`, `9444`) are TLS-only, no plain
+fallback -- see the "Docker" section below.
 
 `gen-cert.sh` is a self-contained local test CA: an ECDSA P-256 CA (`tls/ca.key`/`tls/ca.crt`, generated once and
 reused -- regenerating it would invalidate every client that already trusts the old one) signs one leaf cert
@@ -1144,15 +1145,16 @@ on your host. Defaults differ by what the endpoint actually is, not just its pro
 | --------------------------------- | ------------ | ------------ | --------------------------------------------- |
 | `HTTP_BIND` / write API           | `127.0.0.1`  | `8081`       | plain, local-only                             |
 | `MQTT_BIND` / native MQTT         | `127.0.0.1`  | `1883`       | plain, local-only                             |
+| `MQTTWS_BIND` / MQTT-over-WS      | `127.0.0.1`  | `9001`       | plain, local-only                             |
 | `METRICS_BIND` / metrics          | `0.0.0.0`    | `9100`       | the exporter endpoint Prometheus reaches      |
 | `GRAFANA_BIND` / Grafana          | `0.0.0.0`    | `3000`       | TLS-only; the dashboard you want open         |
 | `PROMETHEUS_BIND` / Prometheus UI | `127.0.0.1`  | `9090`       | TLS-only, but more of an admin/debugging tool |
 
-TLS listeners (`8444`, `8883`, and Grafana/Prometheus's own) always stay on all interfaces regardless of the table
-above -- terminating TLS is what makes exposing them safe in the first place, so there's no loopback-only default
-to override for those.
+TLS listeners (`8444`, `8883`, `9002`, and Grafana/Prometheus's own) always stay on all interfaces regardless of
+the table above -- terminating TLS is what makes exposing them safe in the first place, so there's no
+loopback-only default to override for those.
 
-The core NGINX (`nginx/nginx.conf`) publishes four genuinely separate things, not just different paths behind one
+The core NGINX (`nginx/nginx.conf`) publishes five genuinely separate things, not just different paths behind one
 port:
 
 - The write API (`/event/*`, `/metric/*`) and `/health` on `8080`/`8443` -- reaching nshmqtt over its UNIX socket
@@ -1165,6 +1167,9 @@ port:
   serve this -- but that internal `9100` is not itself published to the host; NGINX's own `9100` is the only
   externally-reachable one.
 - Native MQTT on `1883`/`8883`, over the `stream{}` passthrough to mosquitto.
+- MQTT over WebSocket on `9001`/`9002`, for clients that can't open a raw TCP socket (browser-based MQTT
+  libraries like MQTT.js) -- proxied at the HTTP layer (a WebSocket handshake is itself an HTTP request), unlike
+  native MQTT's TCP passthrough above, but the same broker and topics either way.
 
 A second, separate NGINX container (`nginx-monitoring`, `nginx/nginx-monitoring.conf`) publishes the other two,
 both TLS-only:
