@@ -40,10 +40,22 @@ echo "built image: $IMAGE_TAG"
 # sub, the webhook mock, and the script's own shell) -- none of these
 # are in the runtime image either, it's deliberately minimal -- see that
 # script's own comment.
+# `sh -c` below runs in its own fresh shell process (a new container),
+# not a subshell of this script -- it does NOT inherit the `set -eu`
+# above at all, so it needs its own `set -e` to stop on the first
+# failure. Without it, a failing `make test` would still fall through to
+# running the integration test anyway (they're separate statements, not
+# `&&`-chained to the whole rest of the script), and the exit code CI
+# actually sees would end up reflecting only whichever command ran last
+# -- silently losing a real unit-test failure whenever the integration
+# test still happened to pass on its own. `chown` is the one exception,
+# explicitly allowed to fail (`|| true`) since it's just a host-ownership
+# nicety, not a real test result.
 docker run --rm --user root -e HOST_UID="$HOST_UID" -e HOST_GID="$HOST_GID" \
     -v "$SCRIPT_DIR:/src" -w /src --entrypoint sh "$IMAGE_TAG" -c '
-    apk add --no-cache bash curl g++ make mosquitto mosquitto-clients python3 &&
-    make test &&
-    chown "$HOST_UID:$HOST_GID" tests/test_nshmqtt 2>/dev/null
+    set -e
+    apk add --no-cache bash curl g++ make mosquitto mosquitto-clients python3
+    make test
+    chown "$HOST_UID:$HOST_GID" tests/test_nshmqtt 2>/dev/null || true
     NSHMQTT_BIN=/nshmqtt bash tests/integration_test.sh
 '
