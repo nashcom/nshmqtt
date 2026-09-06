@@ -16,19 +16,11 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v7
 
-      - name: Install dependencies
-        run: sudo apt-get update && sudo apt-get install -y libpaho-mqtt-dev libcurl4-openssl-dev mosquitto mosquitto-clients
-
-      - name: Build
-        run: make
-
-      - name: Unit tests
-        run: make test
-
-      # integration_test.sh starts its own private mosquitto broker (a
-      # non-default port, see the script's own comment) and a minimal
-      # Python mock HTTP receiver for the webhook-forwarding tests --
-      # nothing here needs a running service ahead of time, just the
-      # mosquitto/mosquitto-clients/python3 binaries on PATH.
-      - name: Integration tests
-        run: bash tests/integration_test.sh
+      # Builds the actual Alpine/musl image (same one release.yml
+      # publishes) and runs both the unit tests and integration_test.sh
+      # inside a container from it -- the real libpaho-mqtt-c/libcurl
+      # versions that ship, not a separately-built native Ubuntu/glibc
+      # binary that could behave differently. See test-container.sh's own
+      # comment; run it the same way locally to reproduce a CI failure.
+      - name: Build image and run tests inside it
+        run: ./test-container.sh

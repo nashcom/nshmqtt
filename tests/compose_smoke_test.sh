@@ -15,7 +15,11 @@
 # target health without a real Prometheus query language dependency).
 #
 # TLS checks (8444, 8883) run only if tls/ca.crt exists (see
-# ./gen-cert.sh) -- skipped, not failed, otherwise.
+# ./gen-cert.sh) -- skipped, not failed, otherwise. Prometheus's own
+# checks are also skipped, not failed, if it isn't running at all (the
+# "monitoring" compose profile is optional) -- and always reached over
+# TLS (nginx-monitoring's :9090), never plain HTTP, since that's the
+# only way its own UI/API is published at all.
 
 set -u
 
@@ -33,7 +37,13 @@ skip() { SKIP=$((SKIP + 1)); echo "SKIP: $1"; }
 
 cd "$PROJECT_ROOT" || exit 1
 
-for c in nshmqtt nshmqtt-nginx nshmqtt-mosquitto nshmqtt-prometheus; do
+
+# Only the core stack is required here -- nshmqtt-prometheus is not.
+# Prometheus is optional (the "monitoring" compose profile); its own
+# checks below skip gracefully if it isn't running, same as the
+# mosquitto_pub/mosquitto_sub and tls/ca.crt checks already do for their
+# own optional pieces. Requiring it here would defeat that entirely.
+for c in nshmqtt nshmqtt-nginx nshmqtt-mosquitto; do
     if ! docker inspect -f '{{.State.Running}}' "$c" 2>/dev/null | grep -q true; then
         echo "container '$c' is not running -- run 'docker compose up -d' first" >&2
         exit 1
@@ -138,9 +148,18 @@ fi
 # ---------------------------------------------------------------------
 
 if command -v python3 >/dev/null 2>&1; then
-    targets_json="$(curl -sS 'http://localhost:9090/api/v1/targets' 2>/dev/null)"
-    for job in nshmqtt nshmqtt-state; do
-        health="$(echo "$targets_json" | python3 -c "
+    if [ -f "$CACERT" ]; then
+        # Prometheus's own UI/API is TLS-only through nginx-monitoring
+        # (see nginx-monitoring.conf) -- there is no plain-HTTP path to it
+        # at all, unlike the core stack's other listeners above. Prometheus
+        # is also optional (the "monitoring" compose profile) -- if it's
+        # simply not running, that's a SKIP, not a FAIL. A curl failure
+        # here (connection refused, or -f rejecting a non-2xx response)
+        # means exactly that; only actually reaching it and getting a
+        # per-job health value that isn't "up" is a real failure.
+        if targets_json="$(curl -sS -f --cacert "$CACERT" 'https://localhost:9090/api/v1/targets' 2>/dev/null)" && [ -n "$targets_json" ]; then
+            for job in nshmqtt nshmqtt-state; do
+                health="$(echo "$targets_json" | python3 -c "
 import json, sys
 d = json.load(sys.stdin)
 for t in d['data']['activeTargets']:
@@ -150,9 +169,19 @@ for t in d['data']['activeTargets']:
 else:
     print('missing')
 " 2>/dev/null)"
-        [ "$health" = "up" ] && pass "Prometheus job '$job' is healthy" \
-            || fail "Prometheus job '$job' is healthy (got '$health')"
-    done
+                [ "$health" = "up" ] && pass "Prometheus job '$job' is healthy" \
+                    || fail "Prometheus job '$job' is healthy (got '$health')"
+            done
+        else
+            for job in nshmqtt nshmqtt-state; do
+                skip "Prometheus job '$job' is healthy -- Prometheus not reachable on :9090 (run with --profile monitoring to include it)"
+            done
+        fi
+    else
+        for job in nshmqtt nshmqtt-state; do
+            skip "Prometheus job '$job' is healthy -- no tls/ca.crt (run ./gen-cert.sh; Prometheus is TLS-only)"
+        done
+    fi
 else
     skip "python3 not found -- Prometheus target health checks skipped"
 fi

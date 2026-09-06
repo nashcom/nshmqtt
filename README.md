@@ -216,6 +216,15 @@ Paho MQTT C's own license attribution.
 
 ## Compilation
 
+There's no real need to compile locally -- building via Docker (`./build.sh`, or `docker build .`, see
+[Docker](#docker)) needs nothing but Docker itself; the Dockerfile installs its own exact toolchain and library
+versions internally, so none of the dependencies below have to exist on your own machine at all. `./test-container.sh`
+runs the full test suite the same way, against that same built image, for the same reason.
+
+The commands below are for the alternative: a bare-metal/systemd install (see [Installation](#installation)), or
+local native iteration without Docker. Either one requires the full [Dependencies](#dependencies) list installed
+on your own machine first:
+
 ```bash
 make          # builds ./nshmqtt
 make test     # builds and runs tests/test_nshmqtt (unit tests)
@@ -1242,6 +1251,11 @@ tests/compose_smoke_test.sh      # container-wiring tests against
                                  # Prometheus scrape health; run after
                                  # bringing the stack up, doesn't manage
                                  # it itself
+./test-container.sh              # what CI itself runs: builds the real
+                                 # Alpine/musl image and runs make test +
+                                 # integration_test.sh inside it, against
+                                 # the actual shipped binary -- only
+                                 # Docker needed, no toolchain on the host
 ```
 
 ## Non-goals

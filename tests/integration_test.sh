@@ -80,6 +80,28 @@ if [ ! -x "$NSHMQTT_BIN" ]; then
     echo "nshmqtt binary not found/executable: $NSHMQTT_BIN (build it first: make)" >&2
     exit 1
 fi
+# A musl/Alpine binary (e.g. left over from ./build.sh, which extracts the
+# Docker-built binary to the same ./nshmqtt path `make` writes to) has the
+# executable bit set but can't actually run on a glibc host -- its ELF
+# interpreter (/lib/ld-musl-x86_64.so.1) doesn't exist there, so the
+# kernel's own execve() fails before nshmqtt itself ever starts, not a
+# normal nshmqtt error. Checked against both 126 and 127: exec-failure
+# exit codes aren't fully consistent across shells/failure subtypes --
+# confirmed empirically that bash reports this *specific* case (a
+# missing ELF interpreter, as opposed to e.g. a missing shebang
+# interpreter, which is 126) as 127, so both are treated the same here
+# rather than trusting one assumed convention. Caught so it reads as an
+# actionable diagnosis instead of a bare shell error surfacing later,
+# deep inside start_daemon() below.
+"$NSHMQTT_BIN" --help >/dev/null 2>&1
+ec=$?
+if [ "$ec" -eq 126 ] || [ "$ec" -eq 127 ]; then
+    echo "$NSHMQTT_BIN exists but can't execute on this host (exit $ec) --" >&2
+    echo "likely a musl/Alpine binary (from ./build.sh) on a glibc host." >&2
+    echo "Run 'make' to rebuild it natively, or use ./test-container.sh to" >&2
+    echo "test the actual Alpine/musl artifact instead." >&2
+    exit 1
+fi
 
 HAVE_MOSQUITTO=1
 command -v "$MOSQUITTO_BIN" >/dev/null 2>&1 || HAVE_MOSQUITTO=0
