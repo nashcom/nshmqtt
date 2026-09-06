@@ -35,12 +35,14 @@ echo "built image: $IMAGE_TAG"
 # the runtime image ships only the already-built nshmqtt binary, not a
 # toolchain, and that unit-test binary doesn't link against Paho/curl at
 # all (see the Makefile), so no *-dev packages are needed for it.
-# mosquitto/mosquitto-clients/python3/bash: what integration_test.sh
-# itself needs (its own private broker, mosquitto_pub/sub, the webhook
-# mock, and the script's own shell) -- see that script's own comment.
+# curl/mosquitto/mosquitto-clients/python3/bash: what integration_test.sh
+# itself needs (every HTTP check, its own private broker, mosquitto_pub/
+# sub, the webhook mock, and the script's own shell) -- none of these
+# are in the runtime image either, it's deliberately minimal -- see that
+# script's own comment.
 docker run --rm --user root -e HOST_UID="$HOST_UID" -e HOST_GID="$HOST_GID" \
     -v "$SCRIPT_DIR:/src" -w /src --entrypoint sh "$IMAGE_TAG" -c '
-    apk add --no-cache bash g++ make mosquitto mosquitto-clients python3 &&
+    apk add --no-cache bash curl g++ make mosquitto mosquitto-clients python3 &&
     make test &&
     chown "$HOST_UID:$HOST_GID" tests/test_nshmqtt 2>/dev/null
     NSHMQTT_BIN=/nshmqtt bash tests/integration_test.sh
