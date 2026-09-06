@@ -498,6 +498,13 @@ Uses Eclipse Paho's classic synchronous `MQTTClient` API (`mqtt_host`, `mqtt_por
 turns into an unbounded queue of pending publishes -- see [Concurrency model](#concurrency-model) for exactly how a
 publish degrades under a slow or unreachable broker, and what HTTP status each failure mode maps to.
 
+**Every client on a broker needs a unique client ID.** A broker allows only one live connection per ID, so two
+clients sharing one cause permanent reconnects, each evicting the other's session in turn the moment either
+reconnects. `mqtt_client_id` defaults to `nshmqtt_` plus a random hex suffix (e.g. `nshmqtt_a3f9c21b`), not a
+fixed literal or a hostname, specifically so it can't collide with another device the way a shared literal default
+once did in practice. Set `mqtt_client_id=` (or `NSHMQTT_MQTT_CLIENT_ID`) for a stable value instead -- and check
+this on every other device pointed at the same broker, not just nshmqtt.
+
 ## MQTT subscriptions
 
 There are two distinct, independent ways data gets *into* nshmqtt's current-state store -- the same store

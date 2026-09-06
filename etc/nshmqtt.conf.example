@@ -67,7 +67,10 @@ simple_get=true
 # common deployment; set mqtt_host explicitly for anything else.
 mqtt_host=127.0.0.1
 mqtt_port=1883
-mqtt_client_id=nshmqtt
+# Every client on this broker needs a unique ID -- two sharing one causes
+# permanent reconnects, each evicting the other's session in turn. Check
+# this on every device you point at the broker, not just here.
+#mqtt_client_id=nshmqtt   # default: "nshmqtt_" + a random suffix, not a fixed literal -- see README
 
 # Default QoS for publishes that don't specify their own (0, 1, or 2).
 # /event (POST and the simple GET form) can override this per request with

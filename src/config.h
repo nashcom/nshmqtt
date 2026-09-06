@@ -23,6 +23,12 @@ namespace nshmqtt
 // default_thread_count()): CPU core count, clamped to [4, 20].
 int default_thread_count();
 
+// "nshmqtt_" plus a random 32-bit hex suffix, generated once at startup.
+// See config.cpp for why: a fixed literal default is exactly the kind of
+// value another, unrelated MQTT client can end up using too (a real
+// incident, not hypothetical -- see the mqtt_client_id comment below).
+std::string default_client_id();
+
 struct Config
 {
     // --- server / HTTP listener (mirrors nshgeoip's own keys) ----------
@@ -59,7 +65,18 @@ struct Config
     // --- MQTT connectivity --------------------------------------------
     std::string mqtt_host = "127.0.0.1";
     int mqtt_port = 1883;
-    std::string mqtt_client_id = "nshmqtt";
+    // Defaults to "nshmqtt_" plus a random suffix (see default_client_id()),
+    // not a fixed literal -- a shared literal default is what let an
+    // unrelated MQTT client (an IoT device reusing "nshmqtt" as its own
+    // client ID, entirely by coincidence) repeatedly evict this
+    // connection's session on the same broker: a broker allows only one
+    // live connection per client ID, so two independent things claiming
+    // the same one just take turns evicting each other. A random suffix
+    // fixes this in general, not just for that one device -- unlike a
+    // hostname-based default, it's also unique across multiple nshmqtt
+    // instances that happen to share a host (a scaled deployment, say),
+    // which a shared hostname would not have been.
+    std::string mqtt_client_id = default_client_id();
     int mqtt_qos = 1; // default QoS for publishes that don't specify their own
     // Number of independent MQTT connections publishing in parallel (see
     // mqtt.h's MqttClient class comment for why this is a pool of whole

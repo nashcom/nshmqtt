@@ -8,6 +8,7 @@
 #include <cerrno>
 #include <cstdlib>
 #include <fstream>
+#include <random>
 #include <sstream>
 #include <thread>
 
@@ -38,6 +39,40 @@ int default_thread_count()
         return kCap;
     }
     return n;
+}
+
+std::string default_client_id()
+{
+    // "nshmqtt_" + 8 random hex digits (32 bits) -- generated once, here,
+    // not per connection (mqtt_pool_size's own "-N" suffix already
+    // separates connections within one process; this separates whole
+    // processes/deployments from each other and from anything unrelated).
+    // The hostname was considered and rejected: it's often shared by
+    // every instance in a scaled/multi-replica deployment (they'd all
+    // still collide), whereas a random suffix is unique per process
+    // start regardless of how many instances share a host. 32 bits is
+    // already far past what the birthday paradox needs for however many
+    // nshmqtt processes could realistically ever share one broker (you'd
+    // need tens of thousands of them running at once for a real chance of
+    // a collision) -- not a cryptographic requirement, so std::random_device
+    // is used directly (no PRNG in between) since this runs once at
+    // startup, not on a hot path. Keeps the "nshmqtt_" prefix so the
+    // identity is still recognizable at a glance in a broker's own client
+    // list/logs, unlike a bare random string, and keeps the whole ID
+    // short and readable there too.
+    constexpr int kSuffixBytes = 4; // 32 bits
+    constexpr char kHexDigits[] = "0123456789abcdef";
+
+    std::random_device rd;
+    std::string id = "nshmqtt_";
+    id.reserve(id.size() + static_cast<std::size_t>(kSuffixBytes) * 2);
+    for (int i = 0; i < kSuffixBytes; ++i)
+    {
+        unsigned int byte = rd() & 0xFFu;
+        id += kHexDigits[(byte >> 4) & 0xFu];
+        id += kHexDigits[byte & 0xFu];
+    }
+    return id;
 }
 
 namespace
