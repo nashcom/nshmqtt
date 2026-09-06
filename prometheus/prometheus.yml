@@ -1,0 +1,20 @@
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  # Both jobs go through nginx's own dedicated metrics listener (nginx:9100,
+  # see nginx/nginx.conf), the same connection an external Prometheus would
+  # use against host:9100 -- not straight to nshmqtt.
+
+  # Service metrics -- no payload content, always open.
+  - job_name: nshmqtt
+    static_configs:
+      - targets: ["nginx:9100"]
+
+  # Current values of everything published through nshmqtt -- feeds
+  # Grafana dashboards. Add `authorization: {credentials: <token>}` here
+  # if http_auth_tokens gets configured on nshmqtt.
+  - job_name: nshmqtt-state
+    metrics_path: /metrics-state
+    static_configs:
+      - targets: ["nginx:9100"]

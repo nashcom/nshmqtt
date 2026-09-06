@@ -1,0 +1,152 @@
+services:
+
+  mosquitto:
+    image: eclipse-mosquitto:2
+    container_name: nshmqtt-mosquitto
+    restart: always
+    # Not published directly -- nginx's stream{} block is the published
+    # MQTT entry point (port 1883 on the host).
+    expose:
+      - "1883"
+    volumes:
+      - ./mosquitto/config:/mosquitto/config:ro
+      # Named volumes, not bind mounts: DrvFs (Windows) can't represent
+      # real Unix ownership, which breaks mosquitto's own data/log perms.
+      - mosquitto-data:/mosquitto/data
+      - mosquitto-log:/mosquitto/log
+
+  nshmqtt:
+    build: .
+    image: nshmqtt:latest # matches build.sh's own tag -- avoids a second, differently-tagged image
+    container_name: nshmqtt
+    restart: always
+    depends_on:
+      - mosquitto
+    environment:
+      # Override via a (gitignored) local .env file, e.g. to point this
+      # stack's nshmqtt at a real external broker instead of the bundled one.
+      NSHMQTT_MQTT_HOST: "${NSHMQTT_MQTT_HOST:-mosquitto}"
+      NSHMQTT_MQTT_PORT: "1883"
+      NSHMQTT_SUBSCRIBE_ENABLED: "true"
+      NSHMQTT_SUBSCRIBE_TOPICS: "#"
+
+      # Service metrics (GET /metrics) keep the default nshmqtt_ prefix.
+      # Content metrics (GET /metrics-state) get their own mqtt_ prefix --
+      # two separate namespaces on purpose, see README's "Prometheus support".
+      NSHMQTT_PROMETHEUS_MQTT_STATE_PREFIX: "mqtt_"
+
+      # Empty (off) by default -- comma-separated list of exact MQTT topics
+      # to flatten from JSON into per-field metrics, see README's
+      # "Prometheus support". Set in a local (gitignored) .env file, e.g.
+      # NSHMQTT_PROMETHEUS_MQTT_JSON_TOPICS=awtrix/state/device -- not
+      # hardcoded here since it names topics specific to your own devices,
+      # not this project.
+      NSHMQTT_PROMETHEUS_MQTT_JSON_TOPICS: "${NSHMQTT_PROMETHEUS_MQTT_JSON_TOPICS:-}"
+
+      # 0666: this socket is shared between two containers (different
+      # images/UIDs), not just processes on one host with a common group.
+      NSHMQTT_SOCKET_MODE: "0666"
+
+      # Internal-only TCP listener nginx uses to reach /metrics and
+      # /metrics-state on their own dedicated port (9100) -- see nginx.conf.
+      NSHMQTT_TCP_PORT: "9100"
+      NSHMQTT_TCP_ADDRESS: "0.0.0.0"
+    expose:
+      - "9100"
+    volumes:
+      - nshmqtt-state:/var/lib/nshmqtt
+      - nshmqtt-socket:/run/nshmqtt
+
+  # Published entry point for nshmqtt's HTTP API and native MQTT clients
+  # (stream{} passthrough to mosquitto) -- plain and TLS side by side, see
+  # nginx/nginx.conf. Run ./gen-cert.sh once before starting this with TLS
+  # in use; nginx won't start without tls/tls.crt + tls.key present.
+  nginx:
+    image: nginx:alpine
+    container_name: nshmqtt-nginx
+    restart: always
+    depends_on:
+      - nshmqtt
+      - mosquitto
+    ports:
+      # Every published port has its own bind-address AND port-number
+      # variable, all overridable in a local .env file without touching
+      # this tracked file -- the values below are just the defaults,
+      # matched to what this stack has always published. Plain (non-TLS)
+      # listeners default to 127.0.0.1; TLS listeners stay on all
+      # interfaces by default (terminating TLS is what makes exposing
+      # them safe); METRICS defaults to 0.0.0.0 since it's meant to be
+      # reached from outside this host. Grafana/Prometheus's own ports
+      # live on the nginx-monitoring service below, not here.
+      - "${HTTP_BIND:-127.0.0.1}:${HTTP_PORT:-8081}:8080" # HTTP API
+      - "${HTTPS_BIND:-0.0.0.0}:${HTTPS_PORT:-8444}:8443" # HTTPS
+      - "${MQTT_BIND:-127.0.0.1}:${MQTT_PORT:-1883}:1883" # MQTT
+      - "${MQTTS_BIND:-0.0.0.0}:${MQTTS_PORT:-8883}:8883" # MQTT/TLS
+      - "${METRICS_BIND:-0.0.0.0}:${METRICS_PORT:-9100}:9100" # metrics -- nginx's own dedicated exporter-style listener
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./tls:/etc/nginx/tls:ro
+      # Shared with nshmqtt above; not read-only -- connect() to a UNIX
+      # socket needs write access to the socket inode itself.
+      - nshmqtt-socket:/run/nshmqtt
+
+  # Optional: `docker compose --profile monitoring up -d` to include these
+  # two. The core stack (mosquitto/nshmqtt/nginx) runs fully without them --
+  # nginx's :9100 already serves /metrics and /metrics-state to any
+  # Prometheus, bundled or external. Neither publishes its own port here --
+  # both are reached only through nginx's TLS listeners (see nginx.conf and
+  # nginx's own ports: above); nginx itself starts fine either way, whether
+  # or not this profile is active.
+  prometheus:
+    profiles: ["monitoring"]
+    image: prom/prometheus:latest
+    container_name: nshmqtt-prometheus
+    restart: always
+    depends_on:
+      - nshmqtt
+    expose:
+      - "9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+
+  grafana:
+    profiles: ["monitoring"]
+    image: grafana/grafana:latest
+    container_name: nshmqtt-grafana
+    restart: always
+    depends_on:
+      - prometheus
+    expose:
+      - "3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+
+  # Grafana and Prometheus's own TLS termination -- a separate NGINX
+  # container instead of more server{} blocks in the nginx service
+  # above, so its lifecycle (start/stop) is tied to theirs via this same
+  # profile; see nginx/nginx-monitoring.conf's own top comment for why
+  # that split matters.
+  nginx-monitoring:
+    profiles: ["monitoring"]
+    image: nginx:alpine
+    container_name: nshmqtt-nginx-monitoring
+    restart: always
+    depends_on:
+      - grafana
+      - prometheus
+    ports:
+      - "${GRAFANA_BIND:-0.0.0.0}:${GRAFANA_PORT:-3000}:3443"
+      - "${PROMETHEUS_BIND:-127.0.0.1}:${PROMETHEUS_PORT:-9090}:9444"
+    volumes:
+      - ./nginx/nginx-monitoring.conf:/etc/nginx/nginx.conf:ro
+      - ./tls:/etc/nginx/tls:ro
+
+volumes:
+  nshmqtt-state:
+  nshmqtt-socket:
+  mosquitto-data:
+  mosquitto-log:
+  prometheus-data:
+  grafana-data:

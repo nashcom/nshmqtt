@@ -1,0 +1,34 @@
+# Copyright (c) 2026 Daniel Nashed / NashCom
+# SPDX-License-Identifier: Apache-2.0
+
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-and-test:
+    name: Build & Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y libpaho-mqtt-dev libcurl4-openssl-dev mosquitto mosquitto-clients
+
+      - name: Build
+        run: make
+
+      - name: Unit tests
+        run: make test
+
+      # integration_test.sh starts its own private mosquitto broker (a
+      # non-default port, see the script's own comment) and a minimal
+      # Python mock HTTP receiver for the webhook-forwarding tests --
+      # nothing here needs a running service ahead of time, just the
+      # mosquitto/mosquitto-clients/python3 binaries on PATH.
+      - name: Integration tests
+        run: bash tests/integration_test.sh

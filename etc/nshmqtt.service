@@ -1,0 +1,71 @@
+# systemd unit for nshmqtt. Install to /etc/systemd/system/nshmqtt.service,
+# create the nshmqtt user/group, then:
+#   systemctl daemon-reload && systemctl enable --now nshmqtt
+#
+# Adjust User/Group/SupplementaryGroups/ExecStart to your install prefix --
+# see README.md for the full manual install steps (a single install
+# script like nshgeoip's nshgeoipctl.sh, which generates and installs this
+# for you, is a reasonable future addition but doesn't exist yet).
+
+[Unit]
+Description=nshmqtt - HTTP-to-MQTT gateway and MQTT-to-Prometheus bridge
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/sbin/nshmqtt --config /etc/nshmqtt/nshmqtt.conf
+
+User=nshmqtt
+Group=nshmqtt
+# Grants read access to the UNIX socket to whichever group NGINX (or
+# another local client) runs as, without putting nshmqtt in that group's
+# other privileges. Adjust or remove to match your system.
+SupplementaryGroups=nginx
+
+# Creates /run/nshmqtt (owned by User=/Group=) before the service starts
+# and removes it on stop; nshmqtt itself also removes its socket file on
+# a clean shutdown. StateDirectory does the same for state.json/the
+# Prometheus textfile under /var/lib/nshmqtt.
+RuntimeDirectory=nshmqtt
+RuntimeDirectoryMode=0750
+StateDirectory=nshmqtt
+StateDirectoryMode=0750
+
+Restart=on-failure
+RestartSec=2
+
+# --- Sandboxing / hardening -------------------------------------------
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictNamespaces=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RemoveIPC=true
+UMask=0007
+
+# Unlike nshgeoip (AF_UNIX only), nshmqtt always makes an outbound TCP
+# connection to the MQTT broker regardless of whether the optional local
+# HTTP TCP listener (tcp_port= in the config file) is enabled -- both
+# address families are needed even in the all-defaults case.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+# No special privileges are required.
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+[Install]
+WantedBy=multi-user.target

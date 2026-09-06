@@ -1,0 +1,12 @@
+*.o
+*.d
+nshmqtt
+tests/test_nshmqtt
+tests/*.log
+.git
+
+# Never send these to the Docker daemon as build context, even though
+# the Dockerfile doesn't COPY them -- private key material has no
+# reason to leave the local filesystem at all.
+tls/
+.env

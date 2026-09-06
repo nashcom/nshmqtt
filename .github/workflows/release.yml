@@ -1,0 +1,114 @@
+# Copyright (c) 2026 Daniel Nashed / NashCom
+# SPDX-License-Identifier: Apache-2.0
+
+name: Release
+
+on:
+  release:
+    types: [published, edited]
+
+jobs:
+  release:
+    name: Build & Upload Binaries
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write  # Required to upload release assets
+      packages: write  # Required to push the image to GHCR
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      # QEMU emulates arm64 on this (amd64) runner -- slower than a native
+      # arm64 runner would be, but works the same everywhere without needing
+      # a second runner type. Only needed for the release build; ci.yml
+      # stays amd64-only for speed.
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Read version
+        run: |
+          VERSION=$(sed -n 's/.*NSHMQTT_VERSION "\(.*\)".*/\1/p' src/version.h)
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+
+      # One local (load: true) build per platform, each cached under its own
+      # scope so they don't clobber each other -- these are what the binary
+      # extraction below pulls from. load can only hold a single-platform
+      # image at a time (a multi-platform manifest list can't be loaded into
+      # the local daemon), which is also why this can't just be one
+      # platforms: linux/amd64,linux/arm64 build.
+      - name: Build amd64 image (local)
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64
+          tags: nshmqtt:local-amd64
+          load: true
+          push: false
+          cache-from: type=gha,scope=amd64
+          cache-to: type=gha,mode=max,scope=amd64
+
+      - name: Build arm64 image (local)
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/arm64
+          tags: nshmqtt:local-arm64
+          load: true
+          push: false
+          cache-from: type=gha,scope=arm64
+          cache-to: type=gha,mode=max,scope=arm64
+
+      - name: Extract binaries from images
+        run: |
+          mkdir -p dist
+          for arch in amd64 arm64; do
+            CID=$(docker create "nshmqtt:local-$arch")
+            docker cp "$CID:/nshmqtt" "dist/nshmqtt-$VERSION-$arch"
+            docker rm "$CID" >/dev/null
+          done
+
+      - name: Package release assets
+        run: |
+          cd dist
+          for f in nshmqtt-*; do
+            sha256sum "$f" > "$f.sha256"
+          done
+
+      - name: Upload Release Assets
+        uses: softprops/action-gh-release@v3
+        with:
+          files: |
+            dist/nshmqtt-*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # A genuine multi-platform build this time (push: true supports it,
+      # unlike load above) -- produces one multi-arch manifest list per tag,
+      # so "docker pull ghcr.io/nashcom/nshmqtt:latest" picks the right
+      # architecture automatically on either platform. Reuses both single-
+      # arch caches from above rather than recompiling from scratch.
+      - name: Push multi-arch image to GHCR
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          tags: |
+            ghcr.io/nashcom/nshmqtt:${{ env.VERSION }}
+            ghcr.io/nashcom/nshmqtt:latest
+          push: true
+          cache-from: |
+            type=gha,scope=amd64
+            type=gha,scope=arm64
+          cache-to: type=gha,mode=max

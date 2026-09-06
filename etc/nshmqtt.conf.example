@@ -1,0 +1,201 @@
+# nshmqtt configuration
+#
+# Simple key=value format. Blank lines and lines starting with '#' are
+# ignored. Unknown keys are ignored (and logged as a warning at startup),
+# so this file stays forward-compatible.
+#
+# Every key below also has an NSHMQTT_<KEY> environment variable (e.g.
+# NSHMQTT_MQTT_HOST for mqtt_host=) that overrides it -- environment takes
+# precedence over this file. This file itself is optional at its default
+# path (/etc/nshmqtt/nshmqtt.conf): if it's missing there, nshmqtt just
+# runs on built-in defaults plus whatever NSHMQTT_* variables are set,
+# which is the intended way to configure it in a container.
+
+# --- server / HTTP listener -------------------------------------------
+# UNIX domain socket path and permissions -- the primary interface. NGINX
+# (or another local client) talks HTTP/1.1 over this socket. nshmqtt
+# removes a stale socket file left over from a previous run before
+# binding a new one.
+socket=/run/nshmqtt/nshmqtt.sock
+socket_mode=0660
+
+# HTTP worker thread pool size. Left unset (the default), this tracks the
+# host's own CPU core count (clamped to 4-20).
+#threads=8
+
+# Maximum bytes read for a request's headers, and for its body
+# (independent limits -- a request's headers and its event/metric payload
+# are bounded separately).
+max_request_bytes=8192
+max_body_bytes=65536
+
+# Set to true to log rejected/malformed requests at debug detail.
+#debug_log=false
+
+# Optional TCP/IP listener, off by default (the UNIX socket above is
+# always available regardless of this setting). Set tcp_port to enable
+# it; 0 or unset means disabled. With tcp_address left unset, nshmqtt
+# binds loopback on both IPv4 (127.0.0.1) and IPv6 (::1); set tcp_address
+# to bind that one address only instead. There is no TLS support on this
+# listener -- see README's "NGINX" section for the normal deployment
+# shape, where NGINX (not nshmqtt) terminates HTTPS.
+#tcp_port=8080
+#tcp_address=127.0.0.1
+
+# --- HTTP API behavior --------------------------------------------------
+# Enables the side-effecting "GET /event/<topic>?value=..." and
+# "GET /metric/<name>?value=..." convenience API, for clients that can
+# only issue a GET (old applications, simple webhook tools, monitoring
+# systems). Disable if you don't need it -- a side-effecting GET is not
+# normal HTTP semantics.
+simple_get=true
+
+# Comma-separated list of valid tokens for nshmqtt's own request
+# authentication, checked against the X-Mqtt-Api-Key header. Independent of
+# and stackable with whatever NGINX does with the standard Authorization
+# header (deliberately a different header, so both checks can coexist --
+# see README's "Security considerations"). Applies to every
+# payload-bearing endpoint (/event/*, /metric/*, /metrics-state) -- never
+# to /health or the service-only /metrics, which carry no caller data and
+# stay reachable without a token even when this is set. Empty/unset
+# (default) = disabled.
+#http_auth_tokens=some-long-random-token,another-token-for-a-different-caller
+
+# --- MQTT connectivity ---------------------------------------------------
+# The broker does not need to be on the same host -- see README, "MQTT
+# connectivity". No default assumes localhost even though that's a
+# common deployment; set mqtt_host explicitly for anything else.
+mqtt_host=127.0.0.1
+mqtt_port=1883
+mqtt_client_id=nshmqtt
+
+# Default QoS for publishes that don't specify their own (0, 1, or 2).
+# /event (POST and the simple GET form) can override this per request with
+# either ?qos= or the X-Mqtt-Qos header (the header wins if both are sent)
+# -- see README's "Events". PUT /metric always uses this default; it has no
+# per-request override.
+mqtt_qos=1
+
+# Number of independent MQTT connections publishing in parallel -- each
+# beyond the first gets client_id suffixed "-<index>" on the broker. Only
+# the first connection ever subscribes, regardless of this value, so
+# subscribe_enabled's messages are never delivered more than once. 1
+# (default) is a single connection, today's original behavior; raise it
+# if publish throughput to a remote/slower broker is the bottleneck (see
+# README's "Concurrency model").
+#mqtt_pool_size=1
+
+mqtt_keepalive_seconds=60
+mqtt_connect_timeout_seconds=10
+
+# How long an HTTP request will wait for the dedicated MQTT worker thread
+# to report a publish outcome before giving up (see README's "MQTT
+# reconnect behavior" -- this is what keeps a wedged broker from also
+# wedging the HTTP layer).
+mqtt_publish_timeout_seconds=5
+
+# Depth of the bounded queue between HTTP worker threads and the MQTT
+# worker thread. A full queue means the MQTT side can't keep up (or the
+# broker is down) -- new publishes fail fast with an HTTP error rather
+# than growing this without bound.
+mqtt_queue_size=256
+
+# Leave both empty for an anonymous connection.
+#mqtt_username=
+#mqtt_password=
+
+# --- MQTT subscription ----------------------------------------------------
+# Off by default. When enabled, incoming messages on subscribe_topics
+# update the same current-state store HTTP metric writes use (see
+# README, "MQTT subscriptions") -- a message whose payload isn't a bare
+# number is simply ignored, not an error. subscribe_topics is a
+# comma-separated list of MQTT topic filters.
+subscribe_enabled=false
+subscribe_topics=#
+
+# --- Webhook forwarding (MQTT -> HTTP), independent of the above ----------
+# Off by default. Completely separate from subscribe_enabled/subscribe_topics
+# above -- either can run without the other, with its own topic list.
+# When enabled, every message (any payload, not just numbers) on a topic
+# matching webhook_topics is POSTed to webhook_url as JSON:
+#   {"topic":"...","payload":"...","retain":true|false,"timestamp":<epoch seconds>}
+# See README, "Webhook forwarding".
+webhook_enabled=false
+#webhook_url=https://example.com/hook
+webhook_topics=#
+
+# Optional header sent on every webhook POST, e.g. for a receiver that
+# requires its own credential. Both empty (default) = no header sent.
+#webhook_auth_header=Authorization
+#webhook_auth_value=Bearer some-token
+
+# Skips TLS certificate verification for an https:// webhook_url --
+# local/self-signed testing only, off by default.
+webhook_tls_insecure=false
+
+# Bounds one webhook request (connect + transfer).
+webhook_timeout_seconds=5
+
+# Depth of the bounded queue between the MQTT subscribe worker and the
+# webhook worker thread. A full queue means the webhook receiver can't
+# keep up (or is unreachable) -- new messages are dropped and counted,
+# never retried.
+webhook_queue_size=256
+
+# --- current-state persistence --------------------------------------------
+# Current state (not history -- see README's events-vs-state distinction)
+# optionally survives a restart. The file holds a flat {"name": value,
+# ...} object and is replaced atomically on every change.
+state_enabled=true
+state_file=/var/lib/nshmqtt/state.json
+
+# --- Prometheus output ------------------------------------------------------
+# GET /metrics through the normal HTTP interface (UNIX socket, and TCP
+# if tcp_port is enabled above) -- independent of prometheus_textfile
+# below; either or both may be on at once, see README.
+prometheus_http=true
+
+# Path to periodically write the combined service+state content
+# (/metrics and /metrics-state together, see README's Prometheus
+# support) for node_exporter's textfile collector or similar. Empty/unset
+# = disabled.
+#prometheus_textfile=/var/lib/nshmqtt/nshmqtt.prom
+prometheus_textfile_interval_seconds=60
+
+# Two independent prefixes, not one: prometheus_prefix names service
+# metrics (GET /metrics -- request counters, MQTT connection/pool
+# status, ...), prometheus_mqtt_state_prefix names state/content metrics (GET
+# /metrics-state -- one series per current value, named from the topic).
+# They default to different values ("nshmqtt_" / "mqtt_") on purpose --
+# data about the service itself vs. data the service is exposing are
+# different enough in nature to look distinct by default, not just be
+# independently configurable. Set prometheus_mqtt_state_prefix alone if
+# you want a different content prefix (e.g. back to "nshmqtt_" for one
+# shared namespace, or something else for an existing dashboard's naming)
+# without also renaming every service metric. Keeping the two separate
+# also avoids a real collision risk a single shared prefix would have: a
+# topic literally named e.g. "up" would otherwise normalize to the exact
+# same Prometheus name as nshmqtt's own reserved service metric.
+prometheus_prefix=nshmqtt_
+prometheus_mqtt_state_prefix=mqtt_
+
+# Comma-separated list of EXACT MQTT topics (not filters -- no +/# wildcard
+# matching here) whose payload is a JSON object to flatten into one state
+# entry per leaf, instead of being parsed as a single bare number. Only
+# meaningful for a topic already reached via subscribe_enabled/
+# subscribe_topics above -- this doesn't add a subscription of its own, it
+# only changes how a matching topic's payload is interpreted once
+# received. Empty (default) = every subscribed topic is still numeric-only,
+# unchanged. See README, "Prometheus support", for the conversion rules
+# (numbers kept, booleans become 1/0, nested objects flattened with '_',
+# strings/null/arrays ignored) and a worked example.
+#prometheus_mqtt_json_topics=awtrix/state/device,sensor/foo/state
+
+# Optional, off by default. Prepended to the raw MQTT topic/metric name
+# before normalization (so it goes through the same substitution as the
+# rest of the name -- any non [A-Za-z0-9_] byte in the prefix itself also
+# becomes '_'). Render-time only: does not affect state.json, /metric/<name>
+# addressing, or DELETE -- purely a just-in-case escape hatch for a
+# deployment that needs every state/content metric under one additional
+# namespace segment beyond prometheus_mqtt_state_prefix.
+#state_topic_prefix=
