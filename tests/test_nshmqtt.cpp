@@ -717,6 +717,27 @@ int main()
     test_render_prometheus_state_metrics_basic();
     test_render_health_json_basic();
 
+    // NSHMQTT_TEST_FORCE_FAIL=1: deliberately fails one check, for
+    // nothing except verifying that a real test failure actually
+    // propagates all the way out -- through this binary's own exit
+    // code, test-container.sh's `docker run`, and the CI step that runs
+    // it -- rather than trusting that chain by reasoning alone. Off
+    // (unset) in every normal run; nothing in this repo ever sets it.
+    // Uses the same parse_bool() every other on/off setting in this
+    // project uses -- getenv() != nullptr alone would also trigger on
+    // NSHMQTT_TEST_FORCE_FAIL="" (set but empty) or "0", neither of
+    // which anyone setting this would actually mean as "yes, fail."
+    const char *force_fail_env = std::getenv("NSHMQTT_TEST_FORCE_FAIL");
+    bool force_fail = false;
+    if (force_fail_env != nullptr)
+    {
+        nshmqtt::parse_bool(force_fail_env, force_fail);
+    }
+    if (force_fail)
+    {
+        check(false, "deliberate failure via NSHMQTT_TEST_FORCE_FAIL (not a real bug -- see this check's own comment)");
+    }
+
     std::printf("\n%d passed, %d failed\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

@@ -15,6 +15,12 @@
 #   ./test-container.sh
 #
 # IMAGE_TAG=myregistry/nshmqtt:1.0 ./test-container.sh   # override the image tag
+#
+# NSHMQTT_TEST_FORCE_FAIL=1 ./test-container.sh   # deliberately fail one
+# unit test (see tests/test_nshmqtt.cpp's own comment on it) -- for
+# re-verifying, whenever you want to, that a real failure actually stops
+# the run and comes back out as a non-zero exit code here, instead of
+# trusting that by reasoning alone.
 set -eu
 
 IMAGE_TAG="${IMAGE_TAG:-nshmqtt:latest}"
@@ -51,10 +57,24 @@ echo "built image: $IMAGE_TAG"
 # test still happened to pass on its own. `chown` is the one exception,
 # explicitly allowed to fail (`|| true`) since it's just a host-ownership
 # nicety, not a real test result.
+#
+# `rm -f tests/test_nshmqtt` before `make test`: `-v "$SCRIPT_DIR:/src"`
+# bind-mounts the live host directory, shared with whatever native
+# `make`/`make test` runs happen there too -- Make's own up-to-date
+# check (mtime-based) can't be trusted against that: it's seen a stale
+# `tests/test_nshmqtt` as already current and skipped recompiling it
+# entirely, then failed trying to run a binary that (from this
+# container's view, at that moment) didn't exist. Removing it first
+# forces a real rebuild every time, which is what a throwaway test
+# container should be doing anyway. Deliberately not `make clean` --
+# that also removes the top-level `nshmqtt` binary, which, over this
+# same bind mount, would delete the *host's* own native build too.
 docker run --rm --user root -e HOST_UID="$HOST_UID" -e HOST_GID="$HOST_GID" \
+    -e NSHMQTT_TEST_FORCE_FAIL \
     -v "$SCRIPT_DIR:/src" -w /src --entrypoint sh "$IMAGE_TAG" -c '
     set -e
     apk add --no-cache bash curl g++ make mosquitto mosquitto-clients python3
+    rm -f tests/test_nshmqtt
     make test
     chown "$HOST_UID:$HOST_GID" tests/test_nshmqtt 2>/dev/null || true
     NSHMQTT_BIN=/nshmqtt bash tests/integration_test.sh
