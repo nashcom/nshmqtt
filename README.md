@@ -104,6 +104,10 @@ below links to the section with the full detail.
 
 ### Getting a value IN -- three ways
 
+**All three ways publish to MQTT** -- that part's the same either way. What differs is what happens *after*:
+whether it's also remembered as current state (and so shows up in `/metrics-state` and survives a restart), and
+whether the MQTT message is retained.
+
 | Way                 | You run                               | Reaches current state?  | Retained?        |
 | ------------------- | ------------------------------------- | ----------------------- | ---------------- |
 | HTTP event          | `curl -X POST .../event/<topic>`      | Numeric only, see below | Off by default   |
@@ -240,6 +244,12 @@ nshmqtt --plain MQTT--> 127.0.0.1:<local port> --NGINX stream--> MQTT/TLS --> re
 
 ## HTTP API
 
+Both endpoints below publish to MQTT -- neither is "the MQTT one" and the other isn't. `POST /event` is the
+simpler of the two: it just publishes, nothing else. `PUT /metric` does that too, but also updates current state
+(see [Current state / metrics](#current-state--metrics)). Rule of thumb: if it's a one-off notification that's
+over the moment it happens, use `/event`. If it should still be true a minute from now, and a new caller should be
+able to ask "what is it right now," use `/metric`.
+
 ### Events
 
 ```http
@@ -345,7 +355,7 @@ Content-Type: application/json
 (The spec deliberately keeps this minimal -- no metadata fields beyond `value` in the initial implementation.)
 Either form:
 
-- updates the in-memory current-state store (visible in `/metrics`)
+- updates the in-memory current-state store (visible in `/metrics-state`)
 - persists it to `state_file`, if `state_enabled` (default: on)
 - publishes it to MQTT on `<name>`, **with the retain flag set**
 
@@ -1104,10 +1114,9 @@ docker build -t nshmqtt .
 This is a normal dynamic Alpine build, not a fully static one: Alpine's `paho-mqtt-c-dev` package ships only shared
 libraries (no `libpaho-mqtt3c.a`), so there's no static Paho (or libcurl) to link against. The runtime image is
 still small (Alpine + `paho-mqtt-c` + `libcurl` + `libstdc++`, a few MB), just not a from-scratch single binary.
-See the Dockerfile's own
-comments, and [`docker/fortify_shim.cpp`](docker/fortify_shim.cpp) for a couple of Alpine/musl compatibility
-symbols this build needs (`std::shared_ptr` and `condition_variable::wait_for` against a steady-clock deadline,
-both used by the MQTT worker queue).
+See the Dockerfile's own comments, and [`docker/fortify_shim.cpp`](docker/fortify_shim.cpp) for a couple of
+Alpine/musl compatibility symbols this build needs (`std::shared_ptr` and `condition_variable::wait_for` against
+a steady-clock deadline, both used by the MQTT worker queue).
 
 `docker-compose.yml` brings up a local stack: mosquitto, nshmqtt, and NGINX in front of both. Prometheus and
 Grafana (with Prometheus auto-provisioned as a datasource), plus a second, separate NGINX container that fronts
@@ -1206,15 +1215,15 @@ TCP listener can be reached with no NGINX in the path at all -- NGINX-only auth 
 ## Testing
 
 ```bash
-make test                       # unit tests: HTTP parsing, config, JSON
+make test                        # unit tests: HTTP parsing, config, JSON
                                  # helpers, state persistence, Prometheus
                                  # name normalization/collision detection
-tests/integration_test.sh       # protocol-level tests against a running
+tests/integration_test.sh        # protocol-level tests against a running
                                  # daemon, including a real MQTT round trip
                                  # if mosquitto/mosquitto_sub are on PATH,
                                  # and webhook forwarding (against a mock
                                  # HTTP receiver) if python3 is too
-tests/compose_smoke_test.sh     # container-wiring tests against
+tests/compose_smoke_test.sh      # container-wiring tests against
                                  # `docker compose up -d` -- the shared
                                  # UNIX socket volume, NGINX proxying
                                  # (plain and TLS, HTTP and MQTT), and
