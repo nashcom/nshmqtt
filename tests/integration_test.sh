@@ -592,6 +592,77 @@ else
     skip "no live test broker -- prometheus_mqtt_json_topics tests skipped"
 fi
 
+# ---------------------------------------------------------------------
+# Event placeholders (event_placeholders_enabled) -- opt-in NSHMQTT_*
+# token substitution in a POST /event body, see README's "Event
+# placeholders". http_auth_tokens is still active from the earlier auth
+# block above (config lines accumulate across restarts in this test).
+# ---------------------------------------------------------------------
+
+if [ "$HAVE_MOSQUITTO" = "1" ] && kill -0 "$MOSQUITTO_PID" 2>/dev/null; then
+    kill -TERM "$NSHMQTT_PID" 2>/dev/null
+    wait "$NSHMQTT_PID" 2>/dev/null
+    NSHMQTT_PID=""
+
+    echo "event_placeholders_enabled=true" >> "$CONF"
+
+    if start_daemon; then
+        pass "nshmqtt restarts with event_placeholders_enabled configured"
+
+        # Subscribe first so this doesn't depend on retained delivery --
+        # the event is published unretained (the default), same
+        # subscribe-then-publish-then-read-one pattern as the other
+        # MQTT round-trip checks above.
+        received="$(timeout 5 mosquitto_sub -h 127.0.0.1 -p "$MOSQUITTO_PORT" -t 'placeholder/test' -C 1 2>/dev/null &
+                     SUB_PID=$!
+                     sleep 0.3
+                     curl -sS --unix-socket "$SOCK" -H 'X-Mqtt-Api-Key: secret-one' -X POST \
+                         -d '{"a":"NSHMQTT_RANDOM_HEX8","b":"NSHMQTT_RANDOM_HEX8"}' \
+                         'http://localhost/event/placeholder/test' >/dev/null
+                     wait "$SUB_PID" 2>/dev/null)"
+
+        echo "$received" | grep -qE '"a":"[0-9a-f]{8}"' \
+            && pass "NSHMQTT_RANDOM_HEX8 is replaced with 8 lowercase hex characters in the published payload" \
+            || fail "NSHMQTT_RANDOM_HEX8 is replaced with 8 lowercase hex characters in the published payload (got: $received)"
+
+        value_a="$(echo "$received" | sed -n 's/.*"a":"\([0-9a-f]*\)".*/\1/p')"
+        value_b="$(echo "$received" | sed -n 's/.*"b":"\([0-9a-f]*\)".*/\1/p')"
+        [ -n "$value_a" ] && [ "$value_a" != "$value_b" ] \
+            && pass "two occurrences of the same token get two independently generated values" \
+            || fail "two occurrences of the same token get two independently generated values (got a=$value_a b=$value_b)"
+    else
+        fail "nshmqtt failed to restart with event_placeholders_enabled configured"
+    fi
+
+    # A later line for the same key overrides the earlier one (see
+    # config.cpp's own sequential key=value parsing) -- no need to edit
+    # or remove the line above, just append the opposite value, same
+    # accumulate-only pattern this whole test file already uses.
+    kill -TERM "$NSHMQTT_PID" 2>/dev/null
+    wait "$NSHMQTT_PID" 2>/dev/null
+    NSHMQTT_PID=""
+    echo "event_placeholders_enabled=false" >> "$CONF"
+
+    if start_daemon; then
+        pass "nshmqtt restarts with event_placeholders_enabled set back to false"
+
+        received_off="$(timeout 5 mosquitto_sub -h 127.0.0.1 -p "$MOSQUITTO_PORT" -t 'placeholder/test-off' -C 1 2>/dev/null &
+                         SUB_PID=$!
+                         sleep 0.3
+                         curl -sS --unix-socket "$SOCK" -H 'X-Mqtt-Api-Key: secret-one' -X POST \
+                             -d '{"a":"NSHMQTT_RANDOM_HEX8"}' \
+                             'http://localhost/event/placeholder/test-off' >/dev/null
+                         wait "$SUB_PID" 2>/dev/null)"
+        [ "$received_off" = '{"a":"NSHMQTT_RANDOM_HEX8"}' ] \
+            && pass "with the flag off (default), the literal token text is published unchanged" \
+            || fail "with the flag off (default), the literal token text is published unchanged (got: $received_off)"
+    else
+        fail "nshmqtt failed to restart with event_placeholders_enabled set back to false"
+    fi
+else
+    skip "no live test broker -- event_placeholders_enabled tests skipped"
+fi
+
 echo
 echo "$PASS passed, $FAIL failed, $SKIP skipped"
 [ "$FAIL" -eq 0 ]

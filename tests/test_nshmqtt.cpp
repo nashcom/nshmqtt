@@ -19,6 +19,7 @@
 #include <vector>
 
 #include "../src/config.h"
+#include "../src/event_placeholders.h"
 #include "../src/http.h"
 #include "../src/json_util.h"
 #include "../src/metrics.h"
@@ -634,6 +635,77 @@ void test_build_webhook_json_basic()
           "payload is JSON-escaped, so an arbitrary MQTT payload can't break the envelope");
 }
 
+void test_substitute_event_placeholders_hex_lengths()
+{
+    std::string out8 = nshmqtt::substitute_event_placeholders("NSHMQTT_RANDOM_HEX8");
+    check(out8.size() == 8, "NSHMQTT_RANDOM_HEX8 produces exactly 8 hex characters");
+    check(out8.find_first_not_of("0123456789abcdef") == std::string::npos, "HEX8 output is all lowercase hex digits");
+
+    check(nshmqtt::substitute_event_placeholders("NSHMQTT_RANDOM_HEX16").size() == 16,
+          "NSHMQTT_RANDOM_HEX16 produces exactly 16 hex characters");
+    check(nshmqtt::substitute_event_placeholders("NSHMQTT_RANDOM_HEX32").size() == 32,
+          "NSHMQTT_RANDOM_HEX32 produces exactly 32 hex characters");
+    check(nshmqtt::substitute_event_placeholders("NSHMQTT_RANDOM_HEX64").size() == 64,
+          "NSHMQTT_RANDOM_HEX64 produces exactly 64 hex characters");
+}
+
+void test_substitute_event_placeholders_uuid()
+{
+    std::string out = nshmqtt::substitute_event_placeholders("NSHMQTT_RANDOM_UUID");
+    check(out.size() == 36, "NSHMQTT_RANDOM_UUID produces a 36-character string");
+    check(out.size() == 36 && out[8] == '-' && out[13] == '-' && out[18] == '-' && out[23] == '-',
+          "UUID dashes land at the canonical 8-4-4-4-12 positions");
+    check(out.size() == 36 && out[14] == '4', "UUID version nibble is 4 (UUIDv4)");
+    check(out.size() == 36 && (out[19] == '8' || out[19] == '9' || out[19] == 'a' || out[19] == 'b'),
+          "UUID variant nibble is one of 8/9/a/b (RFC 4122 variant)");
+}
+
+void test_substitute_event_placeholders_timestamps()
+{
+    std::string out_s = nshmqtt::substitute_event_placeholders("NSHMQTT_TIMESTAMP_S");
+    check(!out_s.empty() && out_s.find_first_not_of("0123456789") == std::string::npos,
+          "NSHMQTT_TIMESTAMP_S is replaced with a plain decimal integer");
+    check(out_s.size() >= 10, "NSHMQTT_TIMESTAMP_S looks like a real epoch-seconds value (>= 10 digits)");
+
+    std::string out_ms = nshmqtt::substitute_event_placeholders("NSHMQTT_TIMESTAMP_MS");
+    check(out_ms.size() > out_s.size(), "NSHMQTT_TIMESTAMP_MS has more digits than NSHMQTT_TIMESTAMP_S");
+
+    std::string out_us = nshmqtt::substitute_event_placeholders("NSHMQTT_TIMESTAMP_US");
+    check(out_us.size() > out_ms.size(), "NSHMQTT_TIMESTAMP_US has more digits than NSHMQTT_TIMESTAMP_MS");
+
+    std::string out_ns = nshmqtt::substitute_event_placeholders("NSHMQTT_TIMESTAMP_NS");
+    check(out_ns.size() > out_us.size(), "NSHMQTT_TIMESTAMP_NS has more digits than NSHMQTT_TIMESTAMP_US");
+}
+
+void test_substitute_event_placeholders_datetime()
+{
+    std::string dt = nshmqtt::substitute_event_placeholders("NSHMQTT_DATETIME_UTC");
+    check(dt.size() == 20 && dt[4] == '-' && dt[7] == '-' && dt[10] == 'T' && dt[13] == ':' && dt[16] == ':' &&
+              dt[19] == 'Z',
+          "NSHMQTT_DATETIME_UTC matches YYYY-MM-DDTHH:MM:SSZ");
+
+    std::string date = nshmqtt::substitute_event_placeholders("NSHMQTT_DATE_UTC");
+    check(date.size() == 10 && date[4] == '-' && date[7] == '-', "NSHMQTT_DATE_UTC matches YYYY-MM-DD");
+
+    std::string time = nshmqtt::substitute_event_placeholders("NSHMQTT_TIME_UTC");
+    check(time.size() == 8 && time[2] == ':' && time[5] == ':', "NSHMQTT_TIME_UTC matches HH:MM:SS");
+}
+
+void test_substitute_event_placeholders_reuse_and_passthrough()
+{
+    std::string out = nshmqtt::substitute_event_placeholders("NSHMQTT_RANDOM_HEX8-NSHMQTT_RANDOM_HEX8");
+    check(out.size() == 17, "two HEX8 tokens in one payload both get replaced (correct total length)");
+    check(out.size() == 17 && out.substr(0, 8) != out.substr(9, 8),
+          "two occurrences of the same token get two independently generated values, not one reused");
+
+    check_eq(nshmqtt::substitute_event_placeholders("{\"status\":\"completed\"}"), "{\"status\":\"completed\"}",
+             "text with no recognized tokens is left completely unchanged");
+
+    std::string mixed = nshmqtt::substitute_event_placeholders("id=NSHMQTT_RANDOM_HEX8;done");
+    check(mixed.size() == 16 && mixed.substr(0, 3) == "id=" && mixed.substr(11) == ";done",
+          "a token embedded in surrounding text is replaced in place, surrounding text untouched");
+}
+
 void test_render_prometheus_service_metrics_basic()
 {
     nshmqtt::Metrics m;
@@ -713,6 +785,11 @@ int main()
     test_topic_matches_filter_exact_and_wildcards();
     test_topic_matches_any();
     test_build_webhook_json_basic();
+    test_substitute_event_placeholders_hex_lengths();
+    test_substitute_event_placeholders_uuid();
+    test_substitute_event_placeholders_timestamps();
+    test_substitute_event_placeholders_datetime();
+    test_substitute_event_placeholders_reuse_and_passthrough();
     test_render_prometheus_service_metrics_basic();
     test_render_prometheus_state_metrics_basic();
     test_render_health_json_basic();

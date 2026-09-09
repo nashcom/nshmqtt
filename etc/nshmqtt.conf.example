@@ -50,6 +50,16 @@ max_body_bytes=65536
 # normal HTTP semantics.
 simple_get=true
 
+# Off by default -- deliberately breaks nshmqtt's own "never touches the
+# payload" guarantee (see README's "Design philosophy"), so it has to be
+# turned on explicitly. When on, every recognized NSHMQTT_* token found in
+# a POST /event body (or the simple GET form's ?value=) is replaced with a
+# freshly generated value before publishing -- never PUT /metric, never
+# the webhook envelope. See README's "Event placeholders" for the full
+# token list (random hex/UUID, timestamps, ISO 8601 date/time) and what
+# each one produces.
+#event_placeholders_enabled=true
+
 # Comma-separated list of valid tokens for nshmqtt's own request
 # authentication, checked against the X-Mqtt-Api-Key header. Independent of
 # and stackable with whatever NGINX does with the standard Authorization

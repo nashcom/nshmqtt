@@ -337,6 +337,41 @@ from any other matching MQTT message on the broker. If you want an event's topic
 its payload, keep `subscribe_topics` narrower than the topics you use for events, or use a separate topic namespace
 for each (e.g. `events/...` vs. the topics you publish metrics to).
 
+**Event placeholders, opt-in via `event_placeholders_enabled` (default: off).** When enabled, nshmqtt scans a
+`POST /event` body (or the simple GET form's `?value=`) for a set of recognized `NSHMQTT_*` tokens and replaces
+each occurrence with a freshly generated value before publishing -- the one deliberate exception to "an event's
+body is published byte-for-byte unchanged" (see [Design philosophy](#design-philosophy)), which is exactly why
+it's off by default rather than always active. Applies to `/event` only, never `PUT /metric` or the
+[webhook forwarding](#webhook-forwarding) envelope. Bare tokens, no `{{ }}`/`${ }` wrapper -- the names are
+distinctive enough (`NSHMQTT_`-prefixed, long, specific) that a real payload accidentally containing one is
+negligible risk, and it keeps both the implementation and what a caller has to remember simpler than a delimited
+syntax would.
+
+| Token | Produces |
+| ----- | -------- |
+| `NSHMQTT_RANDOM_HEX8` / `HEX16` / `HEX32` / `HEX64` | that many random hex **characters** (4/8/16/32 random bytes -- the number counts characters, not bytes) |
+| `NSHMQTT_RANDOM_UUID` | a random UUIDv4 |
+| `NSHMQTT_TIMESTAMP_S` / `_MS` / `_US` / `_NS` | Unix epoch time, a plain integer, at that unit |
+| `NSHMQTT_DATETIME_UTC` | ISO 8601, e.g. `2026-09-10T14:23:01Z` |
+| `NSHMQTT_DATE_UTC` | e.g. `2026-09-10` |
+| `NSHMQTT_TIME_UTC` | e.g. `14:23:01` |
+
+```ini
+event_placeholders_enabled=true
+```
+
+```http
+POST /event/domino/server1/backup
+Content-Type: application/json
+
+{"id":"NSHMQTT_RANDOM_UUID","started":"NSHMQTT_DATETIME_UTC","status":"completed"}
+```
+
+publishes something like `{"id":"4489e659-5f0c-40b7-b8d9-5fb6bc3df45c","started":"2026-09-10T14:23:01Z",
+"status":"completed"}` -- a fresh value generated at publish time, not a fixed example. Every occurrence gets its
+own independently generated value: two `NSHMQTT_RANDOM_HEX8` tokens in the same payload produce two different
+values, never one value reused twice. Text that doesn't match a recognized token is left untouched.
+
 ### Current state / metrics
 
 ```http
@@ -522,20 +557,20 @@ There are two distinct, independent ways data gets *into* nshmqtt's current-stat
 ```text
    HTTP PUT /metric/<name>                    a native MQTT publish
    (a script, a Domino agent,                 (a sensor, an IoT device, another
-    a webhook, LotusScript, ...)               service already on the broker)
+   a webhook, LotusScript, ...)               service already on the broker)
               |                                            |
               v                                            v
      nshmqtt's HTTP API                       nshmqtt's own subscription
      (numeric body required,                  (subscribe_topics filter; a matched
       see Current state / metrics)             message whose payload isn't a bare
-              |                                 number is simply ignored)
+              |                                number is simply ignored)
               |                                            |
               +--------------------+-----------------------+
-                                    v
+                                   v
                   one shared current-state store (state.json)
-                                    |
-                                    v
-                    GET /metrics-state  /  state_file  /  Prometheus textfile
+                                   |
+                                   v
+                  GET /metrics-state  /  state_file  /  Prometheus textfile
 ```
 
 `POST /event` is deliberately not on this diagram's left-hand side -- an event never updates state directly, the way

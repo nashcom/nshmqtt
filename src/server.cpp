@@ -21,6 +21,7 @@
 #include <sstream>
 #include <vector>
 
+#include "event_placeholders.h"
 #include "json_util.h"
 #include "log.h"
 #include "text_util.h"
@@ -482,6 +483,15 @@ HttpResponse Server::handle_event(const HttpRequest &req)
         HttpResponse r = make_error_response(405, "method not allowed", ResponseFormat::Json);
         r.headers.push_back({"Allow", cfg_.simple_get ? "POST, GET" : "POST"});
         return r;
+    }
+
+    // Opt-in (see config.h) -- applies to the payload regardless of which
+    // of the two forms above produced it. The response below reports the
+    // substituted payload's own size, since that's what's actually
+    // published, not the size of whatever the caller originally sent.
+    if (cfg_.event_placeholders_enabled)
+    {
+        payload = substitute_event_placeholders(payload);
     }
 
     // Both apply to POST and the simple GET form alike, as either a header

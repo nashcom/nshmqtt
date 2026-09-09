@@ -29,7 +29,8 @@ TEST_SRCS    := tests/test_nshmqtt.cpp \
                  $(SRC_DIR)/state.cpp \
                  $(SRC_DIR)/metrics.cpp \
                  $(SRC_DIR)/mqtt_topic.cpp \
-                 $(SRC_DIR)/webhook_json.cpp
+                 $(SRC_DIR)/webhook_json.cpp \
+                 $(SRC_DIR)/event_placeholders.cpp
 
 .PHONY: all clean test install
 

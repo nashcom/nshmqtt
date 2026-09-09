@@ -239,6 +239,16 @@ bool apply_key(Config &cfg, const std::string &key, const std::string &value, st
         }
         cfg.simple_get = enabled;
     }
+    else if (key == "event_placeholders_enabled")
+    {
+        bool enabled = false;
+        if (!parse_bool(value, enabled))
+        {
+            err = "invalid event_placeholders_enabled (expected true/false)";
+            return false;
+        }
+        cfg.event_placeholders_enabled = enabled;
+    }
     else if (key == "http_auth_tokens")
     {
         cfg.http_auth_tokens = split_csv(value);
@@ -532,6 +542,7 @@ const EnvKey kEnvKeys[] = {
     {"tcp_port",                            "NSHMQTT_TCP_PORT"},
     {"tcp_address",                         "NSHMQTT_TCP_ADDRESS"},
     {"simple_get",                          "NSHMQTT_SIMPLE_GET"},
+    {"event_placeholders_enabled",          "NSHMQTT_EVENT_PLACEHOLDERS_ENABLED"},
     {"http_auth_tokens",                    "NSHMQTT_HTTP_AUTH_TOKENS"},
     {"mqtt_host",                           "NSHMQTT_MQTT_HOST"},
     {"mqtt_port",                           "NSHMQTT_MQTT_PORT"},

@@ -62,6 +62,16 @@ struct Config
     // Prometheus or a container health check) without a token.
     std::vector<std::string> http_auth_tokens;
 
+    // Off by default -- this deliberately breaks nshmqtt's own "never
+    // touches the payload" guarantee (see README's "Design philosophy"),
+    // so it has to be turned on explicitly, not just available. When on,
+    // every recognized NSHMQTT_* placeholder token found in a POST
+    // /event body (or the simple GET form's ?value=) is replaced with a
+    // freshly generated value before publishing -- see
+    // event_placeholders.h for the token list and what each produces.
+    // Applies to /event only, never PUT /metric or the webhook envelope.
+    bool event_placeholders_enabled = false;
+
     // --- MQTT connectivity --------------------------------------------
     std::string mqtt_host = "127.0.0.1";
     int mqtt_port = 1883;
